@@ -1,0 +1,37 @@
+# Dependencies
+/node_modules
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Build outputs
+/dist
+/build
+
+# Logs
+/logs
+*.log
+
+# Testing
+/test
+/coverage
+*.lcov
+
+# IDE and editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+/.test_*
+/.First_harness
+
+/.artifacts/*
+/.agents/*
