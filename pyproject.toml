@@ -1,7 +1,7 @@
 [project]
 name = "pi-in-py"
 version = "0.1.0"
-description = "A small Python agent harness for learning model loops, tools, and queues"
+description = "Doom: a Python workspace assistant with the Twin Eye Imp identity"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-pi-in-py = "pi_in_py.app.cli:main"
+doom = "pi_in_py.app.cli:main"
 
 [build-system]
 requires = ["uv_build==0.10.3"]

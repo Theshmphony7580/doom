@@ -1,13 +1,27 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 import { stripTerminalSequences, type Terminal } from "@earendil-works/pi-tui";
 import { ChatUI, SecretInput } from "../src/ui.ts";
+
+const previousTerm = process.env.TERM;
+const previousNoColor = process.env.NO_COLOR;
+beforeEach(() => {
+  process.env.TERM = "xterm-256color";
+  delete process.env.NO_COLOR;
+});
+afterEach(() => {
+  if (previousTerm === undefined) delete process.env.TERM;
+  else process.env.TERM = previousTerm;
+  if (previousNoColor === undefined) delete process.env.NO_COLOR;
+  else process.env.NO_COLOR = previousNoColor;
+});
 
 class FakeTerminal implements Terminal {
   columns = 80;
   rows = 24;
   kittyProtocolActive = false;
   output = "";
+  title = "";
   onResize: (() => void) | undefined;
   start(_input: (data: string) => void, resize: () => void): void { this.onResize = resize; }
   stop(): void {}
@@ -19,7 +33,7 @@ class FakeTerminal implements Terminal {
   clearLine(): void {}
   clearFromCursor(): void {}
   clearScreen(): void {}
-  setTitle(_title: string): void {}
+  setTitle(title: string): void { this.title = title; }
   setProgress(_active: boolean): void {}
   setProgramStatus(): void {}
 }
@@ -89,7 +103,26 @@ test("code blocks use syntax highlighting when the language is known", () => {
   const ui = new ChatUI(new FakeTerminal(), () => {}, () => {}, ".");
   ui.receive({ type: "event", event: { type: "text_delta", delta: "```js\nconst x = 1;\n```" } });
   const rendered = ui.transcript.render(80).join("\n");
-  assert.match(rendered, /\x1b\[36mconst\x1b\[0m/);
+  assert.match(rendered, /\x1b\[[0-9;]+mconst\x1b\[0m/);
+});
+
+test("Doom's logo is present before ready, survives theme changes, and has a terminal title", () => {
+  const terminal = new FakeTerminal();
+  const ui = new ChatUI(terminal, () => {}, () => {}, ".");
+  const header = ui.tui.children[0];
+  const original = header.render(80);
+  assert.match(original.map(stripTerminalSequences).join("\n"), /doom/);
+  assert.match(original.map(stripTerminalSequences).join("\n"), /Workspace assistant/);
+  assert.match(original.join(""), /[▀▄█]/);
+  ui.start();
+  assert.equal(terminal.title, "doom");
+  ui.receive({ type: "ready", provider: "groq", model: "test", workspace: ".", session: "s" });
+  ui.editor.onSubmit?.("/theme");
+  assert.equal(ui.tui.children[0], header);
+  assert.deepEqual(header.render(80).map(stripTerminalSequences), original.map(stripTerminalSequences));
+  assert.match(lines(ui), /Theme: light/);
+  assert.match(ui.footer.render(80).map(stripTerminalSequences).join("\n"), /doom.*groq test/);
+  ui.stop();
 });
 
 test("login disables ordinary input until the masked prompt is ready", () => {

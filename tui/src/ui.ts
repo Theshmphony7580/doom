@@ -4,6 +4,7 @@ import {
   type Component, type EditorTheme, type MarkdownTheme, type Terminal,
 } from "@earendil-works/pi-tui";
 import { highlight, supportsLanguage } from "cli-highlight";
+import { brand, brandAccent, doomHeader } from "./branding.ts";
 
 type Message = { role: string; content?: unknown; tool_call_id?: string; tool_name?: string; is_error?: boolean };
 type Tool = { id: string; name: string; arguments?: unknown; result?: string; error?: boolean };
@@ -25,7 +26,7 @@ const bold = style(1), dim = style(2), italic = style(3), underline = style(4), 
 const help = "Commands: /steer TEXT, /followup TEXT, /cancel, /status, /login groq, /auth-status groq, /logout groq, /theme, /tools, /quit\nEnter submits; Shift+Enter or Ctrl+J adds a line. Escape cancels a run; Ctrl+C cancels a run or exits.";
 
 function themes(light: boolean): { markdown: MarkdownTheme; editor: EditorTheme } {
-  const accent = style(light ? 34 : 36);
+  const accent = (text: string): string => brandAccent(text, light);
   const code = style(light ? 35 : 33);
   const select = { selectedPrefix: accent, selectedText: bold, description: dim, scrollInfo: dim, noMatch: dim };
   return {
@@ -104,6 +105,7 @@ export class ChatUI {
     this.editor = new Editor(this.tui, themes(false).editor, { paddingX: 1 });
     this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(commands, cwd));
     this.editor.onSubmit = (text) => this.submit(text);
+    this.tui.addChild({ invalidate(): void {}, render: (width) => doomHeader(width, this.light) });
     this.tui.addChild(this.transcript);
     this.tui.addChild(this.editor);
     this.tui.addChild(this.footer);
@@ -125,7 +127,7 @@ export class ChatUI {
     this.refresh();
   }
 
-  start(): void { this.tui.start(); }
+  start(): void { this.tui.start(); this.tui.terminal.setTitle(brand.name); }
   stop(): void { this.tui.stop(); }
 
   private submit(value: string): void {
@@ -253,7 +255,7 @@ export class ChatUI {
       }
       this.transcript.addChild(rendered.component);
     }
-    this.footer.setText(dim(`${this.provider} ${this.model}  |  ${this.running ? "working" : "ready"}  |  ${this.workspace}\n${this.session}  |  /help`));
+    this.footer.setText(dim(`${brand.name}  |  ${this.provider} ${this.model}  |  ${this.running ? "working" : "ready"}  |  ${this.workspace}\n${this.session}  |  /help`));
     this.tui.requestRender();
   }
 }

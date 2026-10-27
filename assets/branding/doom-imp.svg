@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="400" viewBox="0 0 24 20" shape-rendering="crispEdges" role="img" aria-labelledby="title desc">
+  <title id="title">Doom - Twin Eye Imp</title>
+  <desc id="desc">An ivory pixel imp with uneven horns, two square eye openings, and one coral cursor in its right eye.</desc>
+  <path fill="#E5E2D9" fill-rule="evenodd" d="M18 3H19V4H20V8H19V10H21V11H22V14H21V15H20V17H4V16H3V15H2V12H3V11H4V7H5V6H7V8H8V9H14V8H15V7H17V6H18ZM6 11V15H10V11ZM13 11V15H17V11Z"/>
+  <path fill="#F07178" d="M15.5 13.5H16.5V14.5H15.5Z"/>
+</svg>

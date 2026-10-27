@@ -23,7 +23,7 @@ class GroqAuth:
     async def get_api_key(self) -> str:
         result = await self.resolve()
         if result is None:
-            raise AuthError("Run 'pi-in-py auth login groq' or set GROQ_API_KEY")
+            raise AuthError("Run 'doom auth login groq' or set GROQ_API_KEY")
         return result.key
 
     async def login(self, prompt: Callable[[str], Awaitable[str | None]]) -> None:

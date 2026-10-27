@@ -6,7 +6,7 @@ import { ProcessTerminal } from "@earendil-works/pi-tui";
 import { ChatUI } from "./ui.ts";
 
 if (!process.stdin.isTTY || !process.stdout.isTTY) {
-  process.stderr.write("The TUI requires an interactive terminal. Use uv run pi-in-py for noninteractive use.\n");
+  process.stderr.write("The Doom TUI requires an interactive terminal. Use uv run doom for noninteractive use.\n");
   process.exit(1);
 }
 

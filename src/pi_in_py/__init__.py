@@ -1,1 +1,1 @@
-"""A small, inspectable agent harness."""
+"""Doom: a small, inspectable Python workspace assistant."""

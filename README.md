@@ -1,7 +1,14 @@
-# pi-in-py
+# Doom
 
-A small Python agent harness inspired by Pi's separation of provider access,
-agent execution, and the application. Built for reading and learning the code.
+<img src="assets/branding/doom-imp.svg" alt="Doom's Twin Eye Imp logo" width="192" />
+
+Doom is a Python workspace assistant, identified by the Twin Eye Imp: uneven
+horns, two square eyes, and a coral cursor eye. Its terminal logo uses block
+characters, so it needs no image protocol. The coral accent follows both themes;
+the face switches from ivory to charcoal in the light theme.
+
+The implementation lives in `pi_in_py`, inspired by Pi's separation of provider
+access, agent execution, and the application. Built for reading and learning the code.
 
 V1 supports Anthropic and Groq (through the OpenAI SDK), streamed text, sequential tools,
 steering and follow-up queues, cancellation, a turn limit, and JSONL sessions.
@@ -20,7 +27,7 @@ uv sync --locked
 
 Activation is optional when using `uv run`.
 
-## Pi-style terminal interface
+## Doom terminal interface
 
 The optional terminal interface uses the published `@earendil-works/pi-tui`
 package. It requires Node.js 22.19 or newer and npm, in addition to Python and uv.
@@ -43,10 +50,10 @@ conversation or trace.
 The launcher accepts the Python CLI's `--workspace`, `--session`, `--provider`,
 `--model`, `--max-turns`, and `--trace` options. Diagnostic output, including
 trace output, is printed to stderr after the TUI exits so it cannot disrupt the
-screen. The original `uv run pi-in-py` command remains available for scripts,
+screen. Use `uv run doom` for scripts,
 single prompts, standalone authentication, and line-based interactive use.
 
-This interface supports the features of pi-in-py. Pi features without a Python
+This interface supports the features of Doom. Pi features without a Python
 backend, such as extensions, session trees, compaction, and model switching,
 are not available.
 
@@ -74,8 +81,8 @@ PowerShell environment variables take precedence over values in `.env`. The
 ## Run without an API key
 
 ```powershell
-uv run pi-in-py --demo
-uv run pi-in-py --demo --trace
+uv run doom --demo
+uv run doom --demo --trace
 ```
 
 The offline demo lists the workspace and reads `README.md`, then prints a scripted
@@ -87,8 +94,8 @@ the lifecycle events, including tool results, to stderr.
 Anthropic is the default provider:
 
 ```powershell
-uv run pi-in-py --prompt "Read README.md and pyproject.toml and explain this project."
-uv run pi-in-py
+uv run doom --prompt "Read README.md and pyproject.toml and explain this project."
+uv run doom
 ```
 
 Model choice is explicit so the example does not silently choose a paid model.
@@ -99,8 +106,8 @@ supports saved credentials. Process environment variables take precedence over
 To use a Groq API key through the OpenAI SDK:
 
 ```powershell
-uv run pi-in-py --provider groq --prompt "Read README.md and explain this project."
-uv run pi-in-py --provider groq
+uv run doom --provider groq --prompt "Read README.md and explain this project."
+uv run doom --provider groq
 ```
 
 Groq requests use `https://api.groq.com/openai/v1`, as documented in
@@ -114,9 +121,9 @@ variable. The provider flag determines which API key and model variables are rea
 Manage saved Groq credentials without selecting a model or opening a session:
 
 ```powershell
-uv run pi-in-py auth login groq
-uv run pi-in-py auth status groq
-uv run pi-in-py auth logout groq
+uv run doom auth login groq
+uv run doom auth status groq
+uv run doom auth logout groq
 ```
 
 Login uses a hidden terminal prompt and saves the API key in
@@ -177,7 +184,7 @@ Each invocation creates a new session under `.pi-in-py/sessions/`. The path is
 printed at startup. Resume by passing that path with the same workspace:
 
 ```powershell
-uv run pi-in-py --session .pi-in-py\sessions\SESSION_ID.jsonl
+uv run doom --session .pi-in-py\sessions\SESSION_ID.jsonl
 ```
 
 The first JSONL line records the format version and workspace. Each later line
@@ -213,6 +220,8 @@ src/pi_in_py/
     tools.py       Filesystem tools restricted to the selected workspace
     session.py     Append-only completed-turn storage and resume validation
     cli.py         Composition, user input, streaming output, and configuration
+    branding.py    Terminal banner using the shared Twin Eye Imp sprite
+    brand.json     Doom's name, palette, and terminal sprite, shared with the TUI
     auth_store.py  Locked, atomic credential persistence outside sessions
     input.py       One input thread for commands and hidden key prompts
 tests/             Loop, adapter, filesystem, persistence, and CLI tests
