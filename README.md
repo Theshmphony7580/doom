@@ -20,6 +20,36 @@ uv sync --locked
 
 Activation is optional when using `uv run`.
 
+## Pi-style terminal interface
+
+The optional terminal interface uses the published `@earendil-works/pi-tui`
+package. It requires Node.js 22.19 or newer and npm, in addition to Python and uv.
+From the project root, install its pinned dependencies and start it with:
+
+```powershell
+npm --prefix tui install --ignore-scripts
+npm --prefix tui run start -- --demo
+npm --prefix tui run start -- --provider groq --model YOUR_MODEL
+```
+
+The Node frontend owns the terminal and launches the Python agent. It displays
+streamed Markdown, the session transcript, and tool activity. Enter submits;
+Shift+Enter or Ctrl+J inserts a newline. Escape cancels an active run, and
+Ctrl+C cancels a run or exits when idle. Type `/help` for commands, `/tools` to
+expand or collapse tool output, and `/theme` to switch the light and dark
+palettes. `/login groq` opens a hidden input; the key is never added to the
+conversation or trace.
+
+The launcher accepts the Python CLI's `--workspace`, `--session`, `--provider`,
+`--model`, `--max-turns`, and `--trace` options. Diagnostic output, including
+trace output, is printed to stderr after the TUI exits so it cannot disrupt the
+screen. The original `uv run pi-in-py` command remains available for scripts,
+single prompts, standalone authentication, and line-based interactive use.
+
+This interface supports the features of pi-in-py. Pi features without a Python
+backend, such as extensions, session trees, compaction, and model switching,
+are not available.
+
 ## Configure API keys
 
 The CLI loads a `.env` file from the project root. To create one without

@@ -7,4 +7,5 @@ __pycache__/
 .pi-in-py/
 .env
 dist/
+node_modules/
 tests/

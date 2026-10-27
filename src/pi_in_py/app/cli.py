@@ -23,6 +23,7 @@ from pi_in_py.app.auth_store import FileCredentialStore
 from pi_in_py.app.input import InputReader
 from pi_in_py.app.session import SessionStore
 from pi_in_py.app.tools import filesystem_tools
+from pi_in_py.app.ui_protocol import run_ui_protocol
 
 SYSTEM_PROMPT = (
     "You are a helpful assistant with read-only access to the selected workspace. "
@@ -240,6 +241,10 @@ async def run(args: argparse.Namespace) -> int:
             messages=store.messages,
             max_turns=args.max_turns,
         )
+        if getattr(args, "ui_protocol", False):
+            return await run_ui_protocol(
+                agent, auth, store, args.provider, model, args.trace, args.prompt, args.demo
+            )
         agent.subscribe(Renderer(store, args.trace))
         print(f"Workspace: {workspace}\nSession: {store.path}", file=sys.stderr)
         if args.prompt is not None or args.demo:
@@ -262,6 +267,7 @@ def main() -> None:
     parser.add_argument(
         "--trace", action="store_true", help="Print lifecycle events as JSON to stderr"
     )
+    parser.add_argument("--ui-protocol", action="store_true", help=argparse.SUPPRESS)
     commands = parser.add_subparsers(dest="command")
     auth_parser = commands.add_parser("auth", help="Manage saved provider credentials")
     auth_parser.add_argument("action", choices=("login", "status", "logout"))
