@@ -94,7 +94,7 @@ class OpenAIChatProvider:
             model=self.model,
             messages=to_messages(request),
             tools=tools or omit,
-            max_completion_tokens=self.max_tokens,
+            max_completion_tokens=request.max_output_tokens or self.max_tokens,
             stream=True,
             stream_options={"include_usage": True},
         )
@@ -106,11 +106,16 @@ class OpenAIChatProvider:
             async for chunk in stream:
                 if chunk.usage is not None:
                     details = chunk.usage.prompt_tokens_details
+                    cache_read = (details.cached_tokens or 0) if details else 0
+                    cache_write = (details.cache_write_tokens or 0) if details else 0
+                    uncached = chunk.usage.prompt_tokens - cache_read - cache_write
+                    if min(uncached, cache_read, cache_write, chunk.usage.completion_tokens) < 0:
+                        raise ProviderError("Provider returned inconsistent token usage")
                     usage = Usage(
-                        chunk.usage.prompt_tokens,
+                        uncached,
                         chunk.usage.completion_tokens,
-                        (details.cached_tokens or 0) if details else 0,
-                        (details.cache_write_tokens or 0) if details else 0,
+                        cache_read,
+                        cache_write,
                     )
                 if not chunk.choices:
                     continue

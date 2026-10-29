@@ -90,7 +90,10 @@ def test_protocol_demo_resume_and_hidden_login(tmp_path: Path) -> None:
     session = tmp_path / "session.jsonl"
     child = ProtocolProcess(tmp_path, session, tmp_path, "--trace")
     try:
-        assert child.until("ready")[-1]["messages"] == []
+        ready = child.until("ready")[-1]
+        assert ready["messages"] == []
+        usage = ready["context_usage"]
+        assert isinstance(usage, dict) and usage["context_window"] is None
         events = child.until("event", "run_end")
         event_types = [
             event.get("type") for item in events if isinstance(event := item.get("event"), dict)
@@ -98,6 +101,7 @@ def test_protocol_demo_resume_and_hidden_login(tmp_path: Path) -> None:
         assert "text_delta" in event_types
         assert "tool_start" in event_types
         assert "tool_end" in event_types
+        assert "context_update" in event_types
         child.send({"type": "submit", "text": "/login groq"})
         child.until("secret_request")
         key = "fake-private-key"

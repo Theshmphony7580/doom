@@ -79,7 +79,7 @@ class AnthropicProvider:
         # SDK retries apply to requests, never to tool execution.
         async with self.client.messages.stream(
             model=self.model,
-            max_tokens=self.max_tokens,
+            max_tokens=request.max_output_tokens or self.max_tokens,
             system=system,
             messages=messages,
             tools=tools,

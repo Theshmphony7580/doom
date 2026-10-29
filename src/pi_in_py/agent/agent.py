@@ -1,9 +1,16 @@
 import asyncio
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
+from pi_in_py.agent.compaction import (
+    Compaction,
+    compact_context,
+    project_context,
+    validate_compaction,
+)
 from pi_in_py.agent.loop import run_turn
 from pi_in_py.agent.types import AgentEvent, EventSink, RunResult, StopReason, Tool
+from pi_in_py.ai.context import ContextUsage, estimate_context
 from pi_in_py.ai.types import Message, Provider, SystemMessage, UserMessage
 
 
@@ -17,9 +24,21 @@ class Agent:
         messages: Sequence[Message] = (),
         max_turns: int = 5,
         tool_timeout: float = 30,
+        context_window: int | None = None,
+        auto_compact: bool = True,
+        compaction: Compaction | None = None,
+        save_compaction: Callable[[Compaction], None] | None = None,
     ) -> None:
         if max_turns < 1 or tool_timeout <= 0:
             raise ValueError("max_turns and tool_timeout must be positive")
+        if context_window is not None and context_window < 1:
+            raise ValueError("context_window must be positive")
+        self.context_window = context_window
+        self.auto_compact = auto_compact and context_window is not None
+        self.compaction = compaction
+        self._save_compaction = save_compaction
+        self._usage_floor = len(messages)
+        self._awaiting_usage = compaction is not None
         self.provider = provider
         self.tools = {tool.spec.name: tool for tool in tools}
         if len(self.tools) != len(tools):
@@ -29,6 +48,8 @@ class Agent:
         self._messages: list[Message] = (
             list(messages) if messages else [SystemMessage(system_prompt)]
         )
+        if compaction is not None:
+            validate_compaction(compaction, self._messages)
         self._steering: deque[UserMessage] = deque()
         self._followups: deque[UserMessage] = deque()
         self._listeners: list[EventSink] = []
@@ -39,6 +60,69 @@ class Agent:
     @property
     def messages(self) -> tuple[Message, ...]:
         return tuple(self._messages)
+
+    @property
+    def context_messages(self) -> tuple[Message, ...]:
+        return project_context(self._messages, self.compaction)
+
+    def get_context_usage(self) -> ContextUsage:
+        messages = self.context_messages
+        floor = self._usage_floor
+        if self.compaction is not None:
+            floor = 2 + max(0, floor - self.compaction.first_kept_index)
+        tokens, estimated = estimate_context(
+            messages, tuple(tool.spec for tool in self.tools.values()), usage_start=floor
+        )
+        known = not self._awaiting_usage
+        window = self.context_window
+        return ContextUsage(
+            tokens if known else None,
+            tokens,
+            window,
+            tokens / window * 100 if known and window else None,
+            estimated,
+            self.auto_compact,
+        )
+
+    async def _emit_context(self) -> None:
+        await self._emit(AgentEvent("context_update", context_usage=self.get_context_usage()))
+
+    async def _prepare_context(self, checkpoint: int) -> int | None:
+        window = self.context_window
+        if window is None:
+            return None
+        threshold = window - min(16384, window // 4)
+        if self.auto_compact and self.get_context_usage().estimated_tokens > threshold:
+            await self._emit(AgentEvent("compaction_start"))
+            try:
+                result = await compact_context(
+                    self.provider,
+                    self.messages,
+                    tuple(tool.spec for tool in self.tools.values()),
+                    checkpoint,
+                    window,
+                    self.compaction,
+                )
+                # No await between durable storage and activation: cancellation cannot split them.
+                if self._save_compaction is not None:
+                    self._save_compaction(result)
+                self.compaction = result
+                self._usage_floor = checkpoint
+                self._awaiting_usage = True
+            except asyncio.CancelledError:
+                await self._emit(AgentEvent("compaction_end", error="Compaction cancelled"))
+                raise
+            except Exception as error:
+                await self._emit(AgentEvent("compaction_end", error=str(error)))
+                raise
+            await self._emit(AgentEvent("compaction_end"))
+            await self._emit_context()
+        available = (
+            window - self.get_context_usage().estimated_tokens - min(4096, max(1, window // 16))
+        )
+        if available < 1:
+            raise ValueError("Context window is full; reduce input or use a larger model")
+        return min(4096, available)
 
     @property
     def is_running(self) -> bool:
@@ -104,15 +188,25 @@ class Agent:
                 await self._emit(AgentEvent("message_end", message=selected[1]))
 
             for turn in range(self.max_turns):
+                await self._emit_context()
+                output_limit = await self._prepare_context(checkpoint)
                 await self._emit(AgentEvent("turn_start"))
                 response, results = await run_turn(
-                    self.provider, self.messages, self.tools, self._emit, self.tool_timeout
+                    self.provider,
+                    self.context_messages,
+                    self.tools,
+                    self._emit,
+                    self.tool_timeout,
+                    output_limit,
                 )
                 self._messages.extend((response, *results))
+                if response.usage.total_tokens > 0:
+                    self._awaiting_usage = False
                 # A whole turn is committed before session/UI subscribers see turn_end.
                 checkpoint = len(self._messages)
                 selected = None
                 await self._emit(AgentEvent("turn_end", messages=self.messages))
+                await self._emit_context()
                 if response.stop_reason == "length":
                     reason, error = "length", "Model output or context limit reached"
                     break
@@ -142,8 +236,15 @@ class Agent:
             if selected is not None:
                 selected[0].appendleft(selected[1])
             try:
+                await self._emit_context()
                 await self._emit(
-                    AgentEvent("run_end", messages=self.messages, reason=reason, error=error)
+                    AgentEvent(
+                        "run_end",
+                        messages=self.messages,
+                        reason=reason,
+                        error=error,
+                        context_usage=self.get_context_usage(),
+                    )
                 )
             finally:
                 self._task = None

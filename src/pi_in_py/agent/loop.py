@@ -21,10 +21,11 @@ async def run_turn(
     tools: dict[str, Tool],
     emit: EventSink,
     tool_timeout: float,
+    max_output_tokens: int | None = None,
 ) -> tuple[AssistantMessage, tuple[ToolResult, ...]]:
     response: AssistantMessage | None = None
     # Closing the iterator also closes a provider HTTP stream on cancellation.
-    request = Request(messages, tuple(t.spec for t in tools.values()))
+    request = Request(messages, tuple(t.spec for t in tools.values()), max_output_tokens)
     async with aclosing(provider.stream(request)) as stream:
         async for event in stream:
             if response is not None:

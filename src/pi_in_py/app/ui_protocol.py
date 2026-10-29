@@ -10,6 +10,7 @@ from pydantic import JsonValue
 
 from pi_in_py.agent.agent import Agent
 from pi_in_py.agent.types import AgentEvent, RunResult
+from pi_in_py.ai.context import format_context
 from pi_in_py.ai.providers.groq import GroqAuth
 from pi_in_py.app.input import InputReader
 from pi_in_py.app.session import SessionStore
@@ -78,6 +79,7 @@ class ProtocolSession:
                         "text": (
                             f"running={self.agent.is_running} "
                             f"steering={steering} followups={followups}"
+                            f" {format_context(self.agent.get_context_usage())}"
                         ),
                     }
                 )
@@ -156,8 +158,17 @@ async def run_ui_protocol(
             "provider": provider,
             "model": model or "demo",
             "messages": [asdict(message) for message in store.messages],
+            "context_usage": asdict(agent.get_context_usage()),
         }
     )
+    if agent.context_window is None and not demo:
+        send(
+            {
+                "type": "notice",
+                "text": "Unknown model capacity; auto compaction is off. Set --context-window "
+                f"or {provider.upper()}_CONTEXT_WINDOW.",
+            }
+        )
     if prompt is not None or demo:
         session.active = agent.start(prompt or "Demonstrate the tool loop.")
     reader = InputReader()

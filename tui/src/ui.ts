@@ -9,11 +9,12 @@ import { brand, brandAccent, doomHeader } from "./branding.ts";
 type Message = { role: string; content?: unknown; tool_call_id?: string; tool_name?: string; is_error?: boolean };
 type Tool = { id: string; name: string; arguments?: unknown; result?: string; error?: boolean };
 type Entry = { kind: "user" | "assistant" | "notice" | "error"; text: string } | { kind: "tool"; tool: Tool };
-type Event = { type: string; delta?: string; message?: Message; call?: Tool; result?: Message; reason?: string; error?: string };
-type Packet = { type: string; event?: Event; messages?: Message[]; workspace?: string; session?: string; provider?: string; model?: string; text?: string; prompt?: string };
+type ContextUsage = { tokens: number | null; estimated_tokens: number; context_window: number | null; percent: number | null; estimated: boolean; auto_compact: boolean };
+type Event = { type: string; delta?: string; message?: Message; call?: Tool; result?: Message; reason?: string; error?: string; context_usage?: ContextUsage | null };
+type Packet = { type: string; event?: Event; messages?: Message[]; workspace?: string; session?: string; provider?: string; model?: string; text?: string; prompt?: string; context_usage?: ContextUsage };
 
 const commands = [
-  ["help", "Show commands and shortcuts"], ["status", "Show run and queue status"],
+  ["help", "Show commands and shortcuts"], ["status", "Show run, queues, and context usage"],
   ["steer", "Queue steering input"], ["followup", "Queue a follow-up"],
   ["cancel", "Cancel the current run"], ["login", "Save a Groq API key"],
   ["auth-status", "Show credential source"], ["logout", "Remove saved credential"],
@@ -91,6 +92,8 @@ export class ChatUI {
   private light = false;
   private expanded = false;
   private running = false;
+  private compacting = false;
+  private contextUsage: ContextUsage | undefined;
   private provider = "";
   private model = "";
   private workspace = "";
@@ -198,10 +201,17 @@ export class ChatUI {
     if (packet.type === "ready") {
       this.workspace = packet.workspace ?? ""; this.session = packet.session ?? "";
       this.provider = packet.provider ?? ""; this.model = packet.model ?? "";
+      this.contextUsage = packet.context_usage;
       for (const message of packet.messages ?? []) this.addMessage(message, true);
     } else if (packet.type === "event" && packet.event) {
       const event = packet.event;
+      if (event.context_usage) this.contextUsage = event.context_usage;
       if (event.type === "run_start") this.running = true;
+      else if (event.type === "compaction_start") this.compacting = true;
+      else if (event.type === "compaction_end") {
+        this.compacting = false;
+        this.entries.push({ kind: event.error ? "error" : "notice", text: event.error ? `Compaction failed: ${event.error}` : "Conversation compacted" });
+      }
       else if (event.type === "turn_start") { this.streamed = undefined; this.tools.clear(); }
       else if (event.type === "text_delta") {
         if (!this.streamed) { this.streamed = { kind: "assistant", text: "" }; this.entries.push(this.streamed); }
@@ -212,7 +222,7 @@ export class ChatUI {
         const tool = this.tools.get(event.call.id);
         if (tool && typeof event.result.content === "string") { tool.result = event.result.content; tool.error = event.result.is_error; }
       } else if (event.type === "run_end") {
-        this.running = false; this.streamed = undefined;
+        this.running = false; this.compacting = false; this.streamed = undefined;
         if (event.reason !== "complete") {
           for (const tool of this.tools.values()) if (tool.result === undefined) {
             tool.result = `Not completed: ${event.reason ?? "error"}`;
@@ -255,7 +265,17 @@ export class ChatUI {
       }
       this.transcript.addChild(rendered.component);
     }
-    this.footer.setText(dim(`${brand.name}  |  ${this.provider} ${this.model}  |  ${this.running ? "working" : "ready"}  |  ${this.workspace}\n${this.session}  |  /help`));
+    let context = "";
+    const usage = this.contextUsage;
+    if (usage) {
+      const tokens = usage.tokens === null ? "?" : `${usage.estimated ? "~" : ""}${usage.tokens.toLocaleString("en-US")}`;
+      const window = usage.context_window?.toLocaleString("en-US") ?? "?";
+      const percent = usage.percent === null ? "" : ` (${usage.percent.toFixed(1)}%)`;
+      const label = `context ${tokens}/${window}${percent} [${usage.auto_compact ? "auto" : "auto off"}]`;
+      context = `  |  ${(usage.percent ?? 0) > 90 ? style(31)(label) : (usage.percent ?? 0) > 70 ? style(33)(label) : label}`;
+    }
+    const state = this.compacting ? "compacting" : this.running ? "working" : "ready";
+    this.footer.setText(`${dim(`${brand.name}  |  ${this.provider} ${this.model}  |  ${state}  |  ${this.workspace}`)}\n${dim(this.session)}${context}  |  ${dim("/help")}`);
     this.tui.requestRender();
   }
 }

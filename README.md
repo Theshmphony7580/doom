@@ -2,7 +2,10 @@
 
 <img src="assets/branding/doom-imp.svg" alt="Doom's Twin Eye Imp logo" width="192" />
 
-Doom is a Python workspace assistant, identified by the Twin Eye Imp: uneven
+Doom is a read-only AI codebase explorer implemented in Python. It helps you
+understand a project's structure, follow relevant code, and choose what to read next.
+
+Doom is identified by the Twin Eye Imp: uneven
 horns, two square eyes, and a coral cursor eye. Its terminal logo uses block
 characters, so it needs no image protocol. The coral accent follows both themes;
 the face switches from ivory to charcoal in the light theme.
@@ -11,8 +14,20 @@ The implementation lives in `pi_in_py`, inspired by Pi's separation of provider
 access, agent execution, and the application. Built for reading and learning the code.
 
 V1 supports Anthropic and Groq (through the OpenAI SDK), streamed text, sequential tools,
-steering and follow-up queues, cancellation, a turn limit, and JSONL sessions.
+steering and follow-up queues, cancellation, a turn limit, context tracking,
+automatic compaction, and JSONL sessions.
 The included tools are `list_files` and `read_file`.
+
+For a broad introduction, Doom is instructed to inspect the layout, README,
+project configuration, and relevant entry points before explaining the project.
+For specific questions, it focuses on the relevant code and references file paths
+and symbol names. It should distinguish inspected evidence from inference and
+report gaps honestly. These are model instructions, not guarantees of accuracy.
+
+Doom explores files during the conversation; it does not yet build a persistent
+code index or dependency graph, edit code, or run commands. The explorer
+instructions apply to new sessions. Resumed sessions retain their saved system
+message.
 
 ## Setup
 
@@ -48,13 +63,14 @@ palettes. `/login groq` opens a hidden input; the key is never added to the
 conversation or trace.
 
 The launcher accepts the Python CLI's `--workspace`, `--session`, `--provider`,
-`--model`, `--max-turns`, and `--trace` options. Diagnostic output, including
+`--model`, `--max-turns`, `--context-window`, `--no-auto-compact`, and `--trace`
+options. Diagnostic output, including
 trace output, is printed to stderr after the TUI exits so it cannot disrupt the
 screen. Use `uv run doom` for scripts,
 single prompts, standalone authentication, and line-based interactive use.
 
 This interface supports the features of Doom. Pi features without a Python
-backend, such as extensions, session trees, compaction, and model switching,
+backend, such as extensions, session trees, and model switching,
 are not available.
 
 ## Configure API keys
@@ -167,7 +183,7 @@ Interactive commands:
 | `/steer TEXT` | Affect the next turn after the current tool batch |
 | `/followup TEXT` | Wait until the agent would otherwise finish |
 | `/cancel` | Cancel the current run |
-| `/status` | Display run state and queue sizes |
+| `/status` | Display run state, queue sizes, and active context usage |
 | `/login groq` | Save a Groq key using hidden input; available while idle |
 | `/auth-status groq` | Display the active credential source without the key |
 | `/logout groq` | Remove the saved Groq credential; available while idle |
@@ -178,6 +194,46 @@ While idle, `/steer TEXT` and `/followup TEXT` start a run with that text. Input
 line based: press Enter to submit a command. Output may appear while typing.
 Ctrl+C exits. End-of-input waits for the active run to finish.
 
+## Context usage and automatic compaction
+
+The TUI footer and `/status` show active context tokens, model capacity, and the
+percentage used. The line-based CLI also reports usage after each run. `~` marks
+an estimate: Doom uses the latest response's token usage plus estimates for new
+messages. Before a fresh response, it estimates roughly four characters per token,
+including system instructions, tool definitions, arguments, and results. These
+estimates are approximate and can differ substantially for code or non-English text.
+The percentage describes current context, not cumulative tokens consumed.
+
+Model capacity comes from `--context-window`, then `ANTHROPIC_CONTEXT_WINDOW` or
+`GROQ_CONTEXT_WINDOW`, then the offline catalog. For example:
+
+```powershell
+uv run doom --provider groq --model qwen/qwen3.8-27b
+uv run doom --provider groq --model CUSTOM_MODEL --context-window 131072
+uv run doom --no-auto-compact
+```
+
+Unknown models still show estimated tokens, but capacity is `?` and automatic
+compaction is disabled until a capacity override is supplied. Catalog entries
+describe capacity; they do not change which response formats an adapter supports.
+
+Before each model request, Doom checks whether context exceeds capacity minus
+16,384 reserved tokens. It summarizes older committed conversation with the
+current model, retaining approximately 20,000 recent tokens and the newest complete
+model/tool turn. Both budgets scale down for smaller windows. Pending user input
+stays verbatim and tool calls stay paired with their results. Large summaries are
+generated in bounded chunks without tools. Summary calls use the selected model's
+credentials and incur normal provider usage; their text is not streamed as an answer.
+
+Compaction appends a summary record without deleting or rewriting original turns.
+The new context becomes active only after that record is saved. After compaction,
+the displayed count is `?` until a new response supplies usage; Doom still uses an
+internal estimate to budget requests. Resume also discards old usage anchors.
+Cancellation or a failed/ineffective summary keeps the previous context. If even
+the newest turn or pending prompt cannot fit, the run stops with an error; reduce
+the input or use a larger model. `--no-auto-compact` disables new summaries while
+retaining any saved compaction state. The scripted offline demo does not compact.
+
 ## Sessions
 
 Each invocation creates a new session under `.pi-in-py/sessions/`. The path is
@@ -187,8 +243,10 @@ printed at startup. Resume by passing that path with the same workspace:
 uv run doom --session .pi-in-py\sessions\SESSION_ID.jsonl
 ```
 
-The first JSONL line records the format version and workspace. Each later line
-stores the messages from one completed turn, including tool calls and results.
+The first JSONL line records the format version and workspace. Later lines store
+completed turns, including tool calls and results, or compaction records containing
+summaries and retained-history boundaries. Existing sessions remain resumable;
+their original records are not rewritten.
 Text deltas are display events and are not stored as separate messages.
 
 Cancellation or a provider failure discards the unfinished turn from the in-memory
@@ -210,12 +268,15 @@ src/pi_in_py/
     adapter.py     Anthropic request/response translation and streaming
     openai.py      OpenAI-compatible Chat Completions streaming, used by Groq
     fake.py        Deterministic provider used by the demo and tests
+    context.py     Provider-neutral token estimates and context usage
+    models.py      Offline capacity catalog and override resolution
     auth.py        Credential types and the application-owned storage protocol
     providers/groq.py  Groq login and per-request key resolution
   agent/
     types.py       Tool definitions, argument validation, lifecycle events
     loop.py        One model response plus its sequential tool batch
     agent.py       Repeated turns, queues, cancellation, and run ownership
+    compaction.py  Bounded summaries and request-context projection
   app/
     tools.py       Filesystem tools restricted to the selected workspace
     session.py     Append-only completed-turn storage and resume validation
@@ -253,7 +314,7 @@ The `Provider` protocol yields `TextDelta` events followed by one
 `ResponseCompleted` event. Implementations must close their resources when their
 async generator is closed. Unexpected blocks or unsupported provider stop reasons
 fail explicitly rather than silently changing conversation history. Extended
-thinking, images, OAuth, dynamic tool changes, parallel tools, and compaction are
+thinking, images, OAuth, dynamic tool changes, and parallel tools are
 outside v1. Additional providers can implement the same protocol.
 
 ## Verify

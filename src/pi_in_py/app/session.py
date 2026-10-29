@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from pi_in_py.agent.compaction import Compaction, validate_compaction
 from pi_in_py.ai.types import AssistantMessage, Message, SystemMessage, ToolCall, ToolResult
 
 
@@ -21,7 +22,13 @@ class Turn(BaseModel):
     messages: tuple[Message, ...]
 
 
-_RECORD = TypeAdapter(Annotated[Header | Turn, Field(discriminator="type")])
+class CompactionRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    type: Literal["compaction"] = "compaction"
+    compaction: Compaction
+
+
+_RECORD = TypeAdapter(Annotated[Header | Turn | CompactionRecord, Field(discriminator="type")])
 
 
 def validate_transcript(messages: Sequence[Message]) -> None:
@@ -54,6 +61,7 @@ class SessionStore:
         self.path = path.resolve()
         self.workspace = workspace.resolve(strict=True)
         self.messages: tuple[Message, ...] = ()
+        self.compaction: Compaction | None = None
         if self.path.exists():
             self._load()
         else:
@@ -76,8 +84,13 @@ class SessionStore:
                     elif isinstance(record, Turn) and record.messages:
                         messages.extend(record.messages)
                         validate_transcript(messages)
+                    elif isinstance(record, CompactionRecord):
+                        if record.compaction.through_message_count != len(messages):
+                            raise ValueError("Compaction must cover the current saved history")
+                        validate_compaction(record.compaction, messages, self.compaction)
+                        self.compaction = record.compaction
                     else:
-                        raise ValueError("Expected a nonempty turn record")
+                        raise ValueError("Expected a nonempty turn or compaction record")
                 except ValueError as error:
                     raise ValueError(
                         f"Invalid session {self.path}, line {number}: {error}"
@@ -96,8 +109,26 @@ class SessionStore:
         validate_transcript(snapshot)
         # A single record keeps an interrupted tool batch out of the saved transcript.
         record = Turn(messages=new_messages).model_dump_json() + "\n"
-        with self.path.open("a", encoding="utf-8", newline="\n") as file:
-            file.write(record)
-            file.flush()
-            os.fsync(file.fileno())
+        self._append_record(record)
         self.messages = snapshot
+
+    def append_compaction(self, compaction: Compaction) -> None:
+        if compaction.through_message_count != len(self.messages):
+            raise ValueError("Compaction must cover the current saved history")
+        validate_compaction(compaction, self.messages, self.compaction)
+        self._append_record(CompactionRecord(compaction=compaction).model_dump_json() + "\n")
+        self.compaction = compaction
+
+    def _append_record(self, record: str) -> None:
+        with self.path.open("r+b") as file:
+            offset = file.seek(0, os.SEEK_END)
+            try:
+                file.write(record.encode("utf-8"))
+                file.flush()
+                os.fsync(file.fileno())
+            except OSError:
+                # A failed append must not activate a complete-looking record on resume.
+                file.seek(offset)
+                file.truncate()
+                file.flush()
+                raise

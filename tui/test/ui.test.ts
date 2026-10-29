@@ -160,3 +160,35 @@ test("tool call identifiers can be reused in a later turn", () => {
   assert.match(lines(ui), /first result/);
   assert.match(lines(ui), /second result/);
 });
+
+test("context footer follows backend estimates, warnings, and compaction progress", () => {
+  const ui = new ChatUI(new FakeTerminal(), () => {}, () => {}, ".");
+  const usage = { tokens: 82000, estimated_tokens: 82000, context_window: 200000, percent: 41, estimated: true, auto_compact: true };
+  ui.receive({ type: "ready", context_usage: usage });
+  const footer = (): string => ui.footer.render(160).map(stripTerminalSequences).join("\n");
+  assert.match(footer(), /context ~82,000\/200,000 \(41.0%\) \[auto\]/);
+  for (const [percent, code] of [[75, 33], [95, 31]]) {
+    ui.receive({ type: "event", event: { type: "context_update", context_usage: { ...usage, percent } } });
+    assert.ok(ui.footer.render(160).join("\n").includes(`\x1b[${code}mcontext`));
+  }
+  ui.receive({ type: "event", event: { type: "compaction_start" } });
+  assert.match(footer(), /compacting/);
+  ui.receive({ type: "event", event: { type: "compaction_end" } });
+  ui.receive({ type: "event", event: { type: "context_update", context_usage: { ...usage, tokens: null, percent: null } } });
+  assert.match(footer(), /context \?\/200,000/);
+  assert.match(lines(ui), /Conversation compacted/);
+  ui.receive({ type: "event", event: { type: "context_update", context_usage: { ...usage, tokens: 100, estimated: false, percent: 0.05 } } });
+  assert.match(footer(), /context 100\/200,000/);
+  ui.editor.onSubmit?.("/theme");
+  assert.match(footer(), /context 100\/200,000/);
+});
+
+test("unknown capacity and failed compaction remain visible without summary answers", () => {
+  const ui = new ChatUI(new FakeTerminal(), () => {}, () => {}, ".");
+  ui.receive({ type: "ready", context_usage: { tokens: 123, estimated_tokens: 123, context_window: null, percent: null, estimated: true, auto_compact: false } });
+  assert.match(ui.footer.render(160).map(stripTerminalSequences).join("\n"), /context ~123\/\? \[auto off\]/);
+  ui.receive({ type: "event", event: { type: "compaction_start" } });
+  ui.receive({ type: "event", event: { type: "compaction_end", error: "summary request failed" } });
+  assert.match(lines(ui), /Compaction failed: summary request failed/);
+  assert.doesNotMatch(ui.footer.render(160).map(stripTerminalSequences).join("\n"), /compacting/);
+});

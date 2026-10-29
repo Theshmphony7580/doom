@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, JsonValue
 
+from pi_in_py.ai.context import ContextUsage
 from pi_in_py.ai.types import Message, ToolCall, ToolResult, ToolSpec
 
 type StopReason = Literal["complete", "cancelled", "error", "turn_limit", "length"]
@@ -38,6 +39,9 @@ class AgentEvent:
         "tool_end",
         "turn_end",
         "run_end",
+        "context_update",
+        "compaction_start",
+        "compaction_end",
     ]
     message: Message | None = None
     delta: str = ""
@@ -46,6 +50,7 @@ class AgentEvent:
     messages: tuple[Message, ...] = ()
     reason: StopReason | None = None
     error: str | None = None
+    context_usage: ContextUsage | None = None
 
 
 type EventSink = Callable[[AgentEvent], Awaitable[None]]

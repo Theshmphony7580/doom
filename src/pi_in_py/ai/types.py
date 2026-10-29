@@ -24,10 +24,21 @@ type Content = Annotated[Text | ToolCall, Field(discriminator="type")]
 
 @dataclass(frozen=True)
 class Usage:
+    """Disjoint token counts: input_tokens excludes cache reads and writes."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_read_tokens
+            + self.cache_write_tokens
+        )
 
 
 @dataclass(frozen=True)
@@ -75,6 +86,11 @@ class ToolSpec:
 class Request:
     messages: tuple[Message, ...]
     tools: tuple[ToolSpec, ...]
+    max_output_tokens: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_output_tokens is not None and self.max_output_tokens < 1:
+            raise ValueError("max_output_tokens must be positive")
 
 
 @dataclass(frozen=True)
