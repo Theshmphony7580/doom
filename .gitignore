@@ -8,4 +8,3 @@ __pycache__/
 .env
 dist/
 node_modules/
-tests/

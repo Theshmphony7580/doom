@@ -18,16 +18,18 @@ steering and follow-up queues, cancellation, a turn limit, context tracking,
 automatic compaction, and JSONL sessions.
 The included tools are `list_files` and `read_file`.
 
-For a broad introduction, Doom is instructed to inspect the layout, README,
-project configuration, and relevant entry points before explaining the project.
-For specific questions, it focuses on the relevant code and references file paths
-and symbol names. It should distinguish inspected evidence from inference and
-report gaps honestly. These are model instructions, not guarantees of accuracy.
+Doom's short, sectioned identity lives in the packaged
+`src/pi_in_py/app/prompts/system.md`. The user's request determines when to explore:
+greetings and general questions need no workspace tools. Explanations should
+distinguish code, documentation, and inference, cite file paths and symbols,
+and stop once supported. Tool descriptions carry the concrete file limits.
+These model instructions and section labels do not guarantee accuracy or
+protection from instructions embedded in files.
 
 Doom explores files during the conversation; it does not yet build a persistent
-code index or dependency graph, edit code, or run commands. The explorer
-instructions apply to new sessions. Resumed sessions retain their saved system
-message.
+code index or dependency graph, edit code, or run commands. Each application
+startup loads one prompt snapshot. New and resumed chats use it for model
+requests while saved conversation turns retain their original system message.
 
 ## Setup
 
@@ -63,7 +65,7 @@ palettes. `/login groq` opens a hidden input; the key is never added to the
 conversation or trace.
 
 The launcher accepts the Python CLI's `--workspace`, `--session`, `--provider`,
-`--model`, `--max-turns`, `--context-window`, `--no-auto-compact`, and `--trace`
+`--model`, `--max-turns`, `--max-tool-calls`, `--context-window`, `--no-auto-compact`, and `--trace`
 options. Diagnostic output, including
 trace output, is printed to stderr after the TUI exits so it cannot disrupt the
 screen. Use `uv run doom` for scripts,
@@ -172,7 +174,17 @@ credentials before creating a session.
 Use `--workspace PATH` to select the directory tools can read. It defaults to the
 current working directory. Relative tool paths resolve inside that directory;
 resolved paths outside it are rejected, including symlinks pointing outside.
-File reads are UTF-8 and limited to 64 KiB; directory listings stop at 200 entries.
+File reads are UTF-8 and limited to 64 KiB; larger files are rejected rather than
+partially returned. Directory listings are non-recursive and stop at 200 entries;
+a truncation marker means the listing is incomplete.
+
+Each run permits 20 tool-call attempts by default; set `--max-tool-calls N` to
+change the positive limit. Unknown tools, invalid arguments, execution failures,
+timeouts, and cancelled attempts count. Excess calls in a batch receive matching
+error results without executing. Steering and follow-ups share the run's budget;
+a new run resets it. After exhaustion, tools are removed from requests and Doom
+can finish from available evidence if a model turn remains. Continued tool
+requests stop with `tool_limit`. The separate `--max-turns` ceiling still applies.
 
 Interactive commands:
 
@@ -183,7 +195,7 @@ Interactive commands:
 | `/steer TEXT` | Affect the next turn after the current tool batch |
 | `/followup TEXT` | Wait until the agent would otherwise finish |
 | `/cancel` | Cancel the current run |
-| `/status` | Display run state, queue sizes, and active context usage |
+| `/status` | Display run state, queues, context usage, tool attempts/limit, and prompt hash |
 | `/login groq` | Save a Groq key using hidden input; available while idle |
 | `/auth-status groq` | Display the active credential source without the key |
 | `/logout groq` | Remove the saved Groq credential; available while idle |
@@ -244,9 +256,13 @@ uv run doom --session .pi-in-py\sessions\SESSION_ID.jsonl
 ```
 
 The first JSONL line records the format version and workspace. Later lines store
-completed turns, including tool calls and results, or compaction records containing
-summaries and retained-history boundaries. Existing sessions remain resumable;
-their original records are not rewritten.
+completed turns, compaction summaries with retained-history boundaries, and prompt
+revisions. A `prompt` record contains the exact text and its SHA-256 hash and is
+appended before requests when the prompt changes. Its position identifies which
+instructions apply to later turns. If recording fails, no model request is made.
+Existing sessions remain resumable; their original records are not rewritten.
+Resuming with changed instructions shows a notice. `/status` and `--trace` expose
+the current prompt hash. Compaction and context accounting use current instructions.
 Text deltas are display events and are not stored as separate messages.
 
 Cancellation or a provider failure discards the unfinished turn from the in-memory
@@ -281,6 +297,8 @@ src/pi_in_py/
     tools.py       Filesystem tools restricted to the selected workspace
     session.py     Append-only completed-turn storage and resume validation
     cli.py         Composition, user input, streaming output, and configuration
+    prompt.py      Packaged prompt loading and SHA-256 identity
+    prompts/system.md  Short identity, conversation, evidence, and untrusted-content rules
     branding.py    Terminal banner using the shared Twin Eye Imp sprite
     brand.json     Doom's name, palette, and terminal sprite, shared with the TUI
     auth_store.py  Locked, atomic credential persistence outside sessions
@@ -314,7 +332,7 @@ The `Provider` protocol yields `TextDelta` events followed by one
 `ResponseCompleted` event. Implementations must close their resources when their
 async generator is closed. Unexpected blocks or unsupported provider stop reasons
 fail explicitly rather than silently changing conversation history. Extended
-thinking, images, OAuth, dynamic tool changes, and parallel tools are
+thinking, images, OAuth, runtime tool registration, and parallel tools are
 outside v1. Additional providers can implement the same protocol.
 
 ## Verify
@@ -330,3 +348,27 @@ Tests use scripted providers and mocked HTTP streams through the real SDK. They
 disable `.env` loading, isolate the home credential directory, clear provider
 keys, and block real HTTP transports in the test process. CLI subprocess tests
 inherit the isolated environment. Tests need no credentials or API tokens.
+
+## Opt-in model behavior evaluation
+
+The 14 cases in `evals/cases.json` cover greetings, general questions, source-backed
+answers, failures, incomplete listings, conflicting docs, injected instructions,
+compacted evidence, and stopping. They run against synthetic files only. Compare
+the recorded baseline identity with the packaged prompt using one model and the
+same runtime settings and tool descriptions:
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.run --live --provider groq --model YOUR_MODEL --output comparison.json
+```
+
+This explicitly invokes provider calls and consumes API tokens; normal tests never
+run it. Use `--provider anthropic` for Anthropic, `--case greeting` to select a case
+(repeatable), or `--baseline PATH` for another baseline. Credentials follow the
+normal provider configuration. Choose a new output file for each comparison.
+
+The report stores prompts, hashes, model/settings, transcripts, and tool counts.
+Automatic checks require completed runs and zero tool calls for greetings and
+general questions. Review each transcript against its expected behavior; semantic
+results stay marked `pending` until reviewed. Scripted-provider tests check the
+evaluation plumbing, not whether a live model follows instructions. A behavior
+claim requires a successful, reviewed live comparison.

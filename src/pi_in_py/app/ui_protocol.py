@@ -13,6 +13,7 @@ from pi_in_py.agent.types import AgentEvent, RunResult
 from pi_in_py.ai.context import format_context
 from pi_in_py.ai.providers.groq import GroqAuth
 from pi_in_py.app.input import InputReader
+from pi_in_py.app.prompt import prompt_hash
 from pi_in_py.app.session import SessionStore
 
 
@@ -79,6 +80,8 @@ class ProtocolSession:
                         "text": (
                             f"running={self.agent.is_running} "
                             f"steering={steering} followups={followups}"
+                            f" tools={self.agent.tool_calls_used}/{self.agent.max_tool_calls}"
+                            f" prompt={prompt_hash(self.agent.system_prompt)}"
                             f" {format_context(self.agent.get_context_usage())}"
                         ),
                     }
@@ -147,6 +150,8 @@ async def run_ui_protocol(
     trace: bool,
     prompt: str | None,
     demo: bool,
+    *,
+    prompt_updated: bool = False,
 ) -> int:
     session = ProtocolSession(agent, auth, store, trace)
     agent.subscribe(session.on_event)
@@ -161,6 +166,8 @@ async def run_ui_protocol(
             "context_usage": asdict(agent.get_context_usage()),
         }
     )
+    if prompt_updated:
+        send({"type": "notice", "text": "Session now uses the current Doom instructions"})
     if agent.context_window is None and not demo:
         send(
             {

@@ -7,7 +7,7 @@ from pydantic import BaseModel, JsonValue
 from pi_in_py.ai.context import ContextUsage
 from pi_in_py.ai.types import Message, ToolCall, ToolResult, ToolSpec
 
-type StopReason = Literal["complete", "cancelled", "error", "turn_limit", "length"]
+type StopReason = Literal["complete", "cancelled", "error", "turn_limit", "tool_limit", "length"]
 
 
 @dataclass(frozen=True)

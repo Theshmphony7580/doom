@@ -55,8 +55,22 @@ def filesystem_tools(workspace: Path) -> tuple[Tool, ...]:
         return await asyncio.to_thread(list_sync, args)
 
     return (
-        define_tool("read_file", "Read a UTF-8 file, up to 64 KiB.", ReadFileArgs, read_file),
         define_tool(
-            "list_files", "List one directory, up to 200 entries.", ListFilesArgs, list_files
+            "read_file",
+            f"Read a UTF-8 file using a workspace-relative path, up to {MAX_FILE_BYTES // 1024} "
+            "KiB. Oversized files are rejected, not partially returned. Missing paths, "
+            "unreadable files, invalid UTF-8, non-files, and paths resolving outside the "
+            "workspace return errors; an error is not evidence of absent code.",
+            ReadFileArgs,
+            read_file,
+        ),
+        define_tool(
+            "list_files",
+            f"List one directory non-recursively using a workspace-relative path, up to "
+            f"{MAX_ENTRIES} entries. A truncation marker means incomplete coverage, not absent "
+            "files. Missing paths, unreadable directories, non-directories, and paths resolving "
+            "outside the workspace return errors.",
+            ListFilesArgs,
+            list_files,
         ),
     )

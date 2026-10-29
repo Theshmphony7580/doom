@@ -1,12 +1,13 @@
 import os
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from pi_in_py.agent.compaction import Compaction, validate_compaction
 from pi_in_py.ai.types import AssistantMessage, Message, SystemMessage, ToolCall, ToolResult
+from pi_in_py.app.prompt import prompt_hash
 
 
 class Header(BaseModel):
@@ -28,7 +29,22 @@ class CompactionRecord(BaseModel):
     compaction: Compaction
 
 
-_RECORD = TypeAdapter(Annotated[Header | Turn | CompactionRecord, Field(discriminator="type")])
+class PromptRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    type: Literal["prompt"] = "prompt"
+    content: str
+    sha256: str
+
+    @model_validator(mode="after")
+    def validate_content(self) -> Self:
+        if not self.content.strip() or prompt_hash(self.content) != self.sha256:
+            raise ValueError("Invalid prompt content or SHA-256 hash")
+        return self
+
+
+_RECORD = TypeAdapter(
+    Annotated[Header | Turn | CompactionRecord | PromptRecord, Field(discriminator="type")]
+)
 
 
 def validate_transcript(messages: Sequence[Message]) -> None:
@@ -62,6 +78,7 @@ class SessionStore:
         self.workspace = workspace.resolve(strict=True)
         self.messages: tuple[Message, ...] = ()
         self.compaction: Compaction | None = None
+        self.prompt: PromptRecord | None = None
         if self.path.exists():
             self._load()
         else:
@@ -89,8 +106,10 @@ class SessionStore:
                             raise ValueError("Compaction must cover the current saved history")
                         validate_compaction(record.compaction, messages, self.compaction)
                         self.compaction = record.compaction
+                    elif isinstance(record, PromptRecord):
+                        self.prompt = record
                     else:
-                        raise ValueError("Expected a nonempty turn or compaction record")
+                        raise ValueError("Expected a nonempty turn, compaction, or prompt record")
                 except ValueError as error:
                     raise ValueError(
                         f"Invalid session {self.path}, line {number}: {error}"
@@ -98,6 +117,14 @@ class SessionStore:
         if number == 0:
             raise ValueError("Session file is empty")
         self.messages = tuple(messages)
+
+    def append_prompt(self, content: str) -> bool:
+        record = PromptRecord(content=content, sha256=prompt_hash(content))
+        if self.prompt == record:
+            return False
+        self._append_record(record.model_dump_json() + "\n")
+        self.prompt = record
+        return True
 
     def append_turn(self, messages: Sequence[Message]) -> None:
         snapshot = tuple(messages)

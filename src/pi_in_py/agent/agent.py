@@ -8,10 +8,15 @@ from pi_in_py.agent.compaction import (
     project_context,
     validate_compaction,
 )
-from pi_in_py.agent.loop import run_turn
+from pi_in_py.agent.loop import ToolBudget, run_turn
 from pi_in_py.agent.types import AgentEvent, EventSink, RunResult, StopReason, Tool
 from pi_in_py.ai.context import ContextUsage, estimate_context
-from pi_in_py.ai.types import Message, Provider, SystemMessage, UserMessage
+from pi_in_py.ai.types import Message, Provider, SystemMessage, ToolSpec, UserMessage
+
+TOOL_LIMIT_NOTICE = (
+    "Tool-call budget exhausted for this run. Tools are unavailable. "
+    "Finish using available evidence and report unresolved gaps; do not request more tools."
+)
 
 
 class Agent:
@@ -20,9 +25,10 @@ class Agent:
         provider: Provider,
         tools: Sequence[Tool] = (),
         *,
-        system_prompt: str = "You are a helpful assistant.",
+        system_prompt: str | None = None,
         messages: Sequence[Message] = (),
         max_turns: int = 5,
+        max_tool_calls: int = 20,
         tool_timeout: float = 30,
         context_window: int | None = None,
         auto_compact: bool = True,
@@ -31,6 +37,8 @@ class Agent:
     ) -> None:
         if max_turns < 1 or tool_timeout <= 0:
             raise ValueError("max_turns and tool_timeout must be positive")
+        if max_tool_calls < 1:
+            raise ValueError("max_tool_calls must be positive")
         if context_window is not None and context_window < 1:
             raise ValueError("context_window must be positive")
         self.context_window = context_window
@@ -44,9 +52,21 @@ class Agent:
         if len(self.tools) != len(tools):
             raise ValueError("Tool names must be unique")
         self.max_turns = max_turns
+        self._tool_budget = ToolBudget(max_tool_calls)
         self.tool_timeout = tool_timeout
         self._messages: list[Message] = (
-            list(messages) if messages else [SystemMessage(system_prompt)]
+            list(messages)
+            if messages
+            else [
+                SystemMessage(
+                    system_prompt if system_prompt is not None else "You are a helpful assistant."
+                )
+            ]
+        )
+        if not isinstance(self._messages[0], SystemMessage):
+            raise ValueError("Messages must start with a system message")
+        self._system_prompt = (
+            system_prompt if system_prompt is not None else self._messages[0].content
         )
         if compaction is not None:
             validate_compaction(compaction, self._messages)
@@ -62,17 +82,40 @@ class Agent:
         return tuple(self._messages)
 
     @property
+    def system_prompt(self) -> str:
+        return self._system_prompt
+
+    @property
     def context_messages(self) -> tuple[Message, ...]:
-        return project_context(self._messages, self.compaction)
+        return project_context(self._request_messages, self.compaction)
+
+    @property
+    def _request_messages(self) -> tuple[Message, ...]:
+        prompt = self._system_prompt
+        if self.tool_calls_used >= self.max_tool_calls:
+            prompt += "\n\n" + TOOL_LIMIT_NOTICE
+        return (SystemMessage(prompt), *self._messages[1:])
+
+    @property
+    def max_tool_calls(self) -> int:
+        return self._tool_budget.limit
+
+    @property
+    def tool_calls_used(self) -> int:
+        return self._tool_budget.used
+
+    @property
+    def _available_specs(self) -> tuple[ToolSpec, ...]:
+        if self.tool_calls_used >= self.max_tool_calls:
+            return ()
+        return tuple(tool.spec for tool in self.tools.values())
 
     def get_context_usage(self) -> ContextUsage:
         messages = self.context_messages
         floor = self._usage_floor
         if self.compaction is not None:
             floor = 2 + max(0, floor - self.compaction.first_kept_index)
-        tokens, estimated = estimate_context(
-            messages, tuple(tool.spec for tool in self.tools.values()), usage_start=floor
-        )
+        tokens, estimated = estimate_context(messages, self._available_specs, usage_start=floor)
         known = not self._awaiting_usage
         window = self.context_window
         return ContextUsage(
@@ -97,8 +140,8 @@ class Agent:
             try:
                 result = await compact_context(
                     self.provider,
-                    self.messages,
-                    tuple(tool.spec for tool in self.tools.values()),
+                    self._request_messages,
+                    self._available_specs,
                     checkpoint,
                     window,
                     self.compaction,
@@ -145,6 +188,10 @@ class Agent:
         if self.is_running:
             raise RuntimeError("Agent is already running; use steer() or follow_up()")
         message = self._user_message(text)
+        # A previous response's usage included the prior run's budget notice/tool definitions.
+        if self.tool_calls_used >= self.max_tool_calls:
+            self._usage_floor = len(self._messages)
+        self._tool_budget.used = 0
         self._started = False
         self._cancel_requested = False
         self._task = asyncio.create_task(self._run(message))
@@ -191,6 +238,7 @@ class Agent:
                 await self._emit_context()
                 output_limit = await self._prepare_context(checkpoint)
                 await self._emit(AgentEvent("turn_start"))
+                exhausted = self.tool_calls_used >= self.max_tool_calls
                 response, results = await run_turn(
                     self.provider,
                     self.context_messages,
@@ -198,17 +246,26 @@ class Agent:
                     self._emit,
                     self.tool_timeout,
                     output_limit,
+                    budget=self._tool_budget,
                 )
                 self._messages.extend((response, *results))
                 if response.usage.total_tokens > 0:
                     self._awaiting_usage = False
                 # A whole turn is committed before session/UI subscribers see turn_end.
                 checkpoint = len(self._messages)
+                if not exhausted and self.tool_calls_used >= self.max_tool_calls:
+                    self._usage_floor = checkpoint
                 selected = None
                 await self._emit(AgentEvent("turn_end", messages=self.messages))
                 await self._emit_context()
                 if response.stop_reason == "length":
                     reason, error = "length", "Model output or context limit reached"
+                    break
+                if exhausted and results:
+                    reason, error = (
+                        "tool_limit",
+                        "Model requested tools after the tool-call budget was exhausted",
+                    )
                     break
                 if turn + 1 == self.max_turns:
                     if results or self._steering or self._followups:

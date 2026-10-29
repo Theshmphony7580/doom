@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import aclosing
+from dataclasses import dataclass
 
 from pi_in_py.agent.types import AgentEvent, EventSink, Tool
 from pi_in_py.ai.types import (
@@ -15,6 +16,12 @@ from pi_in_py.ai.types import (
 )
 
 
+@dataclass
+class ToolBudget:
+    limit: int
+    used: int = 0
+
+
 async def run_turn(
     provider: Provider,
     messages: tuple[Message, ...],
@@ -22,10 +29,13 @@ async def run_turn(
     emit: EventSink,
     tool_timeout: float,
     max_output_tokens: int | None = None,
+    *,
+    budget: ToolBudget,
 ) -> tuple[AssistantMessage, tuple[ToolResult, ...]]:
     response: AssistantMessage | None = None
     # Closing the iterator also closes a provider HTTP stream on cancellation.
-    request = Request(messages, tuple(t.spec for t in tools.values()), max_output_tokens)
+    specs = tuple(t.spec for t in tools.values()) if budget.used < budget.limit else ()
+    request = Request(messages, specs, max_output_tokens)
     async with aclosing(provider.stream(request)) as stream:
         async for event in stream:
             if response is not None:
@@ -47,11 +57,18 @@ async def run_turn(
 
     results: list[ToolResult] = []
     for call in calls:
+        permitted = response.stop_reason != "length" and budget.used < budget.limit
+        if permitted:
+            budget.used += 1
         await emit(AgentEvent("tool_start", call=call))
         try:
             if response.stop_reason == "length":
                 raise ValueError(
                     "Not executed: the response was truncated; arguments may be incomplete"
+                )
+            if not permitted:
+                raise ValueError(
+                    "Not executed: tool-call budget exhausted; answer from available evidence"
                 )
             tool = tools.get(call.name)
             if tool is None:

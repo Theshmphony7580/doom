@@ -32,7 +32,7 @@ def test_help_uses_doom_as_the_command_name() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "usage: doom" in result.stdout
-    assert "Doom - your workspace assistant" in result.stdout
+    assert "Doom - your read-only AI codebase explorer" in result.stdout
 
 
 @pytest.mark.parametrize("is_terminal", [False, True])
