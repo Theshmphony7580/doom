@@ -174,9 +174,25 @@ credentials before creating a session.
 Use `--workspace PATH` to select the directory tools can read. It defaults to the
 current working directory. Relative tool paths resolve inside that directory;
 resolved paths outside it are rejected, including symlinks pointing outside.
-File reads are UTF-8 and limited to 64 KiB; larger files are rejected rather than
-partially returned. Directory listings are non-recursive and stop at 200 entries;
-a truncation marker means the listing is incomplete.
+`read_file` reads UTF-8 text in pages. Its `offset` is a positive line number
+(default 1); `limit` is a positive maximum line count (default 2,000). Every page
+returns at most 2,000 complete lines or 50 KiB of file content, preserving LF/CRLF
+endings. Larger requested limits still obey these caps. Absolute paths inside
+the workspace also work.
+
+For example, `read_file({"path":"src/app.py","offset":101,"limit":40})` reads
+lines 101–140. When more content exists, a notice after the file text reports the
+range read and the next offset. The notice is additional to the 50 KiB content
+cap; no total line count is calculated. Each continuation uses another tool-call
+attempt and reads the current file, so edits between calls can change the result.
+
+Empty files return empty text at offset 1; offsets beyond EOF return errors.
+A first requested line over 50 KiB returns an error naming that line; a later
+oversized line ends the page before it. Use a later offset to skip such a line.
+Invalid UTF-8 encountered while reading, unreadable or missing files, directories,
+and paths resolving outside the workspace also return errors. Images are not
+supported. Directory listings are non-recursive and stop at 200 entries; a
+truncation marker means the listing is incomplete.
 
 Each run permits 20 tool-call attempts by default; set `--max-tool-calls N` to
 change the positive limit. Unknown tools, invalid arguments, execution failures,

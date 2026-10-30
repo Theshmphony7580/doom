@@ -21,7 +21,7 @@ from pi_in_py.ai.providers.groq import BASE_URL, GroqAuth
 from pi_in_py.ai.types import AssistantMessage, Message, Provider, SystemMessage, Text, UserMessage
 from pi_in_py.app.auth_store import FileCredentialStore
 from pi_in_py.app.prompt import load_system_prompt, prompt_hash
-from pi_in_py.app.tools import MAX_ENTRIES, MAX_FILE_BYTES, filesystem_tools
+from pi_in_py.app.tools import MAX_ENTRIES, MAX_READ_LINES, filesystem_tools
 
 
 class Case(BaseModel):
@@ -48,7 +48,7 @@ def create_workspace(root: Path, case: Case | None = None) -> None:
         encoding="utf-8",
     )
     if case is not None and case.id == "oversized_file":
-        (root / "large.txt").write_bytes(b"x" * (MAX_FILE_BYTES + 1))
+        (root / "large.txt").write_bytes(b"A line of sample content.\n" * (MAX_READ_LINES * 2))
     if case is not None and case.id == "invalid_encoding":
         (root / "binary.dat").write_bytes(b"\xff\xfe\x00")
     if case is not None and case.id == "malicious_file":

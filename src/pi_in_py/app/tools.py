@@ -1,4 +1,5 @@
 import asyncio
+from codecs import getincrementaldecoder
 from itertools import islice
 from pathlib import Path
 
@@ -6,13 +7,23 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from pi_in_py.agent.types import Tool, define_tool
 
-MAX_FILE_BYTES = 64 * 1024
+MAX_READ_BYTES = 50 * 1024
+MAX_READ_LINES = 2000
 MAX_ENTRIES = 200
 
 
 class ReadFileArgs(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    path: str = Field(min_length=1, description="UTF-8 file path relative to the workspace")
+    path: str = Field(
+        min_length=1,
+        description="UTF-8 file path, workspace-relative or absolute inside the workspace",
+    )
+    offset: int = Field(default=1, ge=1, description="First line to read, starting at 1")
+    limit: int = Field(
+        default=MAX_READ_LINES,
+        ge=1,
+        description=f"Maximum lines to read; output is capped at {MAX_READ_LINES} lines or 50 KiB",
+    )
 
 
 class ListFilesArgs(BaseModel):
@@ -36,10 +47,44 @@ def filesystem_tools(workspace: Path) -> tuple[Tool, ...]:
         if not path.is_file():
             raise ValueError("Path must be a regular file")
         with path.open("rb") as file:
-            data = file.read(MAX_FILE_BYTES + 1)
-        if len(data) > MAX_FILE_BYTES:
-            raise ValueError(f"File exceeds the {MAX_FILE_BYTES}-byte v1 limit")
-        return data.decode("utf-8")
+            # Decode skipped fragments incrementally: a chunk may split a UTF-8 character.
+            decoder = getincrementaldecoder("utf-8")()
+            for _ in range(1, args.offset):
+                while True:
+                    chunk = file.readline(MAX_READ_BYTES + 1)
+                    decoder.decode(chunk, final=not chunk)
+                    if not chunk:
+                        raise ValueError(f"Offset {args.offset} is beyond end of file")
+                    if chunk.endswith(b"\n"):
+                        break
+
+            lines: list[str] = []
+            output_bytes = 0
+            for _ in range(min(args.limit, MAX_READ_LINES)):
+                line = file.readline(MAX_READ_BYTES - output_bytes + 1)
+                if not line:
+                    if not lines and args.offset > 1:
+                        raise ValueError(f"Offset {args.offset} is beyond end of file")
+                    return "".join(lines)
+                if output_bytes + len(line) > MAX_READ_BYTES:
+                    if not lines:
+                        raise ValueError(
+                            f"Line {args.offset} exceeds the {MAX_READ_BYTES}-byte (50 KiB) limit; "
+                            f"read_file returns complete lines. Use offset={args.offset + 1} "
+                            "to skip it."
+                        )
+                    break
+                lines.append(line.decode("utf-8"))
+                output_bytes += len(line)
+            else:
+                if not file.read(1):
+                    return "".join(lines)
+
+        next_offset = args.offset + len(lines)
+        return (
+            "".join(lines) + f"\n\n[Showing lines {args.offset}–{next_offset - 1}. "
+            f"Use offset={next_offset} to continue.]"
+        )
 
     async def read_file(args: ReadFileArgs) -> str:
         return await asyncio.to_thread(read_sync, args)
@@ -57,10 +102,16 @@ def filesystem_tools(workspace: Path) -> tuple[Tool, ...]:
     return (
         define_tool(
             "read_file",
-            f"Read a UTF-8 file using a workspace-relative path, up to {MAX_FILE_BYTES // 1024} "
-            "KiB. Oversized files are rejected, not partially returned. Missing paths, "
-            "unreadable files, invalid UTF-8, non-files, and paths resolving outside the "
-            "workspace return errors; an error is not evidence of absent code.",
+            "Read a UTF-8 file using a workspace-relative or absolute path inside the workspace. "
+            f"offset starts at line 1; limit defaults to {MAX_READ_LINES}. Return at most "
+            f"{MAX_READ_LINES} complete lines or {MAX_READ_BYTES // 1024} KiB of file content, "
+            "preserving line endings. Partial results append the range read and the next offset; "
+            "call again with that offset to continue. No total line count is calculated. "
+            "A first requested line over 50 KiB returns an error; a later oversized line ends "
+            "the page before that line. Missing paths, unreadable files, invalid UTF-8 encountered "
+            "while reading, non-files, offsets beyond EOF, and paths resolving outside the "
+            "workspace return errors; an error is not evidence of absent code. "
+            "An empty file returns empty text at offset 1. Separate calls read the current file.",
             ReadFileArgs,
             read_file,
         ),

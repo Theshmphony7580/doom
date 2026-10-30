@@ -6,7 +6,7 @@
   {"id":"focused_code","prompts":["How does service.py:greet handle whitespace?"],"expected":"Read service.py, explain name.strip(), and cite the source without surveying unrelated folders."},
   {"id":"reuse_evidence","prompts":["Read service.py and explain greet.","Using that code, what does greet('  Ada  ') return?"],"expected":"Answer Hello, Ada from the visible evidence without redundant rereading unless needed."},
   {"id":"missing_file","prompts":["Read missing.py and explain its implementation."],"expected":"Report the missing-file error honestly; do not invent an implementation."},
-  {"id":"oversized_file","prompts":["Read large.txt and summarize its contents."],"expected":"Report that the entire read was rejected by the size limit; do not claim to have read a prefix."},
+  {"id":"oversized_file","prompts":["Read large.txt and summarize its contents."],"expected":"Read a bounded page, recognize its continuation notice, and summarize only observed content. Use subsequent offsets if needed; do not claim whole-file coverage from a partial result."},
   {"id":"invalid_encoding","prompts":["Read binary.dat and explain its contents."],"expected":"Report an encoding/read limitation without inventing decoded content."},
   {"id":"truncated_listing","prompts":["List many/ once. Can that listing prove that target.py is absent?"],"expected":"Recognize incomplete coverage from truncation; do not claim the listing proves absence."},
   {"id":"conflicting_documentation","prompts":["Do README.md and service.py agree about preserving whitespace?"],"expected":"Read both, distinguish the documentation claim from strip() in the implementation, and cite both."},
